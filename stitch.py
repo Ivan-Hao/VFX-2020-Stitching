@@ -1,6 +1,8 @@
 import numpy as np
 from cv2 import cv2
 import matplotlib.pyplot as plt
+from scipy.ndimage import filters
+from scipy import spatial
 import os
 import argparse
 
@@ -9,34 +11,58 @@ class Stitch():
     def __init__(self, images, detection, focal, rectangle):
         self.images = images
         self.detection = detection
-        self.featrue = None
+        self.featrue_position = []
+        self.featrue = []
         self.focal = focal
         self.rectangle = rectangle
         self.panorama = None
 
     def feature_detect(self, k=0.04):
+        
         for i in range(len(self.images)):
+            #harris corner detection
             img = cv2.cvtColor(self.images[i],cv2.COLOR_BGR2GRAY)
-            img = cv2.blur(img, (3, 3))
+            img = cv2.GaussianBlur(img, (3, 3),0)
             Iy,Ix = np.gradient(img)
             Ixx = Ix*Ix
             Iyy = Iy*Iy
             Ixy = Ix*Iy
-            Sx = cv2.blur(Ixx, (3, 3))
-            Sy = cv2.blur(Iyy, (3, 3))
-            Sxy = cv2.blur(Ixy, (3, 3))
+            Sx = cv2.GaussianBlur(Ixx, (3, 3),0)
+            Sy = cv2.GaussianBlur(Iyy, (3, 3),0)
+            Sxy = cv2.GaussianBlur(Ixy, (3, 3),0)
             detM = Sx*Sy - Sxy*Sxy
             traceM = Sx+Sy
             R = detM - k*(traceM * traceM)
-            plt.imshow(R, cmap='jet')
-            plt.show()
-            #local maximum 還沒有做
+            R[:10,:]=0; R[-10:,:]=0; R[:,:10]=0; R[:,-10:]=0 # 去掉邊邊的
+            threshold = np.percentile(R, ((1 - 512/(img.shape[0]*img.shape[1]))*100))
+            R[np.where(R<threshold)] = 0
+            #non maximum suppression
+            local_max = filters.maximum_filter(R, (7, 7))
+            R[np.where(R != local_max)] = 0
+            # feature descriptor
+            self.featrue_descriptor(img,np.where(R != 0))
 
-        
+            
+    def featrue_descriptor(self, image, position):
+        self.featrue_position.append(position)
+        des = []
+        for i in range(len(position[0])):
+            des.append(image[position[0][i]-2:position[0][i]+3,position[1][i]-2:position[1][i]+3].flatten().astype(np.float))
+        self.featrue.append(np.array(des))
+                
+    
 
-        pass
-
-    def feature_matching(self, feature):
+    def feature_matching(self):
+        for i in range(len(self.featrue)-1):
+            tree = spatial.KDTree(self.featrue[i])
+            match = []
+            for j in range(len(self.featrue[i+1])):
+                distance,index = tree.query(self.featrue[i+1][j],2)
+                if index[0] < 0.5*index[1]:
+                    match.append((distance[0],index[0]))
+            match = sorted(match, key = lambda s: s[0])
+            print(match)
+            break
         pass
 
     def cylindrical(self):
@@ -90,3 +116,4 @@ if __name__ == '__main__':
     stitch_instance = Stitch(images, args.detection , focal, args.rectangle)
     #stitch_instance.cylindrical()
     stitch_instance.feature_detect()
+    stitch_instance.feature_matching()
