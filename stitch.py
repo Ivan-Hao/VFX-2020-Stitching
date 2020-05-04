@@ -6,6 +6,7 @@ from scipy import spatial
 import os
 import argparse
 
+
 class Stitch():
 
     def __init__(self, images, detection ,focal, rectangle):
@@ -17,6 +18,7 @@ class Stitch():
         self.feature = [] # 全部的image feature
         self.focal = focal # list of focal length
         self.rectangle = rectangle
+        self.motion = []
         self.panorama = None
 
     def feature_detect(self, k=0.04):
@@ -46,17 +48,15 @@ class Stitch():
                 local_max = filters.maximum_filter(R, (5, 5))
                 R[np.where(R != local_max)] = 0
                 '''
-                #==================
                 plt.plot(np.where(R != 0)[1],np.where(R != 0)[0],'r*')
                 plt.imshow(R,cmap='gray')
                 plt.show()
                 break
-                #==================
                 '''
                 # feature descriptor
                 self.feature_descriptor(img,np.where(R != 0))
         else:
-            sift = cv2.xfeatures2d.SIFT_create(100)
+            sift = cv2.xfeatures2d.SIFT_create()
             for i in range(len(self.images)):
                 img = cv2.cvtColor(self.images[i],cv2.COLOR_BGR2GRAY)
                 self.gray_images.append(img)
@@ -65,7 +65,7 @@ class Stitch():
             
                     
     def feature_descriptor(self, image, position):
-        if self.detection == 'harris':     
+        if self.detection == 'harris':    
             self.feature_position.append(position)
             des = []
             for i in range(len(position[0])):
@@ -86,7 +86,7 @@ class Stitch():
                         match.append((distance[0],index[0],j)) # (distance, feature index, feature index)
                 match = sorted(match, key = lambda s: s[0])
                 self.match.append(match)
-                '''
+                
                 # 拼接看看
                 for j in range(10):
                     temp = np.concatenate((self.gray_images[i],self.gray_images[i+1]),axis=1)
@@ -94,7 +94,7 @@ class Stitch():
                     plt.plot(384+self.feature_position[i+1][1][match[j][2]],self.feature_position[i+1][0][match[j][2]],'-r*')
                 plt.imshow(temp,cmap='gray')
                 plt.show()
-                '''
+                
         else:
             FLANN_INDEX_KDTREE = 1
             index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
@@ -106,20 +106,37 @@ class Stitch():
                 kp2,des2 = self.feature[i+1]
                     
                 matches = flann.knnMatch(des1, des2, k=2)
+                
+                matches2 = flann.knnMatch(des2, des1, k=1)
+                qid = [i[0].queryIdx for i in matches2]
+                tid = [i[0].trainIdx for i in matches2]
+                def fn(x):
+                    if x[0].queryIdx in tid and x[0].trainIdx in qid:
+                        if qid.index(x[0].trainIdx) == tid.index(x[0].queryIdx):
+                            return x
+                        return None
+                    else:
+                        return None
+                matches = list(filter(fn,matches))
+                
                 match = []
                 for m, n in matches:
-                    if m.distance < 0.50*n.distance:
-                        match.append((kp1[m.queryIdx].pt,kp2[m.trainIdx].pt))
-                self.match.append(match) #只有match沒有 feature position ((x1,y1) , (x2,y2))
+                    if m.distance < 0.4*n.distance:
+                        match.append((m.distance ,kp1[m.queryIdx].pt,kp2[m.trainIdx].pt))
+                match = sorted(match, key = lambda s: s[0])
+                self.match.append(match) #只有match沒有 feature position (distance , (x1,y1) , (x2,y2))
                 '''
                 for j in range(10):
                     temp = np.concatenate((self.gray_images[i],self.gray_images[i+1]),axis=1)
-                    plt.plot(match[j][0][0],match[j][0][1],'-r*')
-                    plt.plot(384+match[j][1][0],match[j][1][1],'-r*')
+                    r = np.random.rand()
+                    b = np.random.rand()
+                    g = np.random.rand()
+                    plt.plot(match[j][1][0],match[j][1][1],'*',color= (r,g,b))
+                    plt.plot(384+match[j][2][0],match[j][2][1],'*',color = (r,g,b))
                 plt.imshow(temp,cmap='gray')
                 plt.show()
+                
                 '''
-        pass
 
     def cylindrical(self):
 
@@ -140,54 +157,76 @@ class Stitch():
             y_prime = np.around(y_prime).astype(np.uint)
             project = np.zeros_like(self.images[i])
             project[y_prime,x_prime,:] = self.images[i][index[0],index[1],:]
-            self.images[i] = project
-            '''
-            #==============
-            plt.imshow(project[:,:,::-1])
-            plt.show()
-            #==============
-            '''        
-        pass
-
+            self.images[i] = project.astype(np.uint8)
+  
     def pairwise_alignment(self):
-        panorama = np.zeros((self.images[0].shape[0],self.images[0].shape[1]*len(self.images)))
+        panorama = np.zeros((self.images[0].shape[0],self.images[0].shape[1]*len(self.images),3),dtype=np.uint8)
         if self.detection == 'harris':
-            A = np.zeros((20,6))
-            b = np.zeros((20,1))
+            A = np.zeros((8,6))
+            b = np.zeros((8,1))
             for i in range(len(self.images)-1):
-                for j in range(10):
-                    # origin x                                       # origin y
-                    b[j*2,0] = self.feature_position[i][1][self.match[i][j][1]]
-                    b[j*2+1] = self.feature_position[i][0][self.match[i][j][1]]
-                    # match x                                             # match y
-                    A[j*2,0:3] = np.array([self.feature_position[i+1][1][self.match[i][j][2]], self.feature_position[i+1][0][self.match[i][j][2]],1])
-                    A[j*2+1,3:6] = np.array([self.feature_position[i+1][1][self.match[i][j][2]], self.feature_position[i+1][0][self.match[i][j][2]],1])
-                A_inverse = np.linalg.pinv(A)
-                motion_model = np.dot(A_inverse,b).reshape(2,3)
-                rows,cols = self.images[i+1].shape[:2]
-                result = cv2.warpAffine(self.images[i+1],motion_model,(rows,cols))
-                plt.imshow(result[:,:,::-1])
+                best = None
+                best_motion = None
+                min_ = np.inf
+                for k in range(200):
+                    for j in range(4):
+                        # origin x                                       # origin y
+                        b[j*2,0] = self.feature_position[i][1][self.match[i][j][1]]
+                        b[j*2+1] = self.feature_position[i][0][self.match[i][j][1]]
+                        # match x                                             # match y
+                        A[j*2,0:3] = np.array([self.feature_position[i+1][1][self.match[i][j][2]], self.feature_position[i+1][0][self.match[i][j][2]],1])
+                        A[j*2+1,3:6] = np.array([self.feature_position[i+1][1][self.match[i][j][2]], self.feature_position[i+1][0][self.match[i][j][2]],1])
+                    A_inverse = np.linalg.pinv(A)
+                    motion_model = np.dot(A_inverse,b).reshape(2,3)
+                    motion_model = np.vstack((motion_model,[0,0,1]))
+                    compare = np.dot(motion_model,A[::2,:3].T)
+                    diff = np.abs(compare[:2,:].flatten('F') - b.flatten()).sum()
+                    if diff < min_:
+                        rows, cols = self.images[i+1].shape[0:2]
+                        min_ = diff
+                        best = cv2.warpPerspective(self.images[i+1],motion_model,(cols,rows))
+                        best_motion = motion_model
+
+                plt.imshow(best[:,:,::-1])
                 plt.show()
+                self.motion.append(best_motion)
         else:
             for i in range(len(self.images)-1):
-                A = np.zeros((20,6))
-                b = np.zeros((20,1))
-                for j in range(10):
-                    print(len(self.match),len(self.match[0]),len(self.match[0][0]))
-                    b[j*2,0] = self.match[i][j][0][0] # origin x
-                    b[j*2+1] = self.match[i][j][0][1] # origin y
-                    A[j*2,0:3] = np.array([self.match[i][j][1][0],self.match[i][j][1][1],1]) # x_prime
-                    A[j*2+1,3:6] = np.array([self.match[i][j][1][0],self.match[i][j][1][1],1]) # y_prime
-                print(A)
-                print(b)
-                A_inverse = np.linalg.pinv(A)
-                motion_model = np.dot(A_inverse,b).reshape(2,3)
-                print(motion_model)
-                rows,cols = self.images[i+1].shape[:2]
-                result = cv2.warpAffine(self.images[i+1],motion_model,(cols,rows))
-                plt.imshow(result[:,:,::-1])
+                #==========================RANSAC
+                best = None
+                best_motion = None
+                min_ = np.inf
+                for k in range(200):
+                    A = np.zeros((12,6),dtype=np.float64)
+                    b = np.zeros((12,1),dtype=np.float64)
+                    for j in range(6):
+                        x = np.random.randint(len(self.match[i]))
+                        b[j*2,0] = self.match[i][x][1][0] # origin x
+                        b[j*2+1] = self.match[i][x][1][1] # origin y
+                        A[j*2,0:3] = np.array([self.match[i][x][2][0],self.match[i][x][2][1],1]) # x_prime, y_prime, 1 ,0 ,0 ,0
+                        A[j*2+1,3:6] = np.array([self.match[i][x][2][0],self.match[i][x][2][1],1]) # 0, 0, 0, x_prime, y_prime, 1
+                    A_inverse = np.linalg.pinv(A)
+                    motion_model = np.dot(A_inverse,b).reshape(2,3)
+                    motion_model = np.vstack((motion_model,[0,0,1]))
+                    
+                    compare = np.dot(motion_model,A[::2,:3].T)
+                    diff = np.abs(compare[:2,:].flatten('F') - b.flatten()).sum()
+                    if diff < min_:
+                        rows, cols = self.images[i+1].shape[0:2]
+                        min_ = diff
+                        best = cv2.warpPerspective(self.images[i+1],motion_model,(cols,rows))
+                        best_motion = motion_model
+                
+                plt.imshow(best[:,:,::-1])
                 plt.show()
-                break
+                self.motion.append(best_motion)
+
+            for i in range(len(self.images)):
+                panorama[:self.images[i].shape[0],i*self.images[i].shape[1]:(i+1)*self.images[i].shape[1],:] = self.images[i]
+            plt.imshow(panorama[:,:,::-1])
+            plt.show()
+        
+
 
         pass
 
@@ -213,7 +252,7 @@ if __name__ == '__main__':
         images.append(cv2.imread(os.path.join(args.path,files)))
     focal = np.loadtxt(args.focal)
     stitch_instance = Stitch(images ,args.detection ,focal, args.rectangle)
-    #stitch_instance.cylindrical()
+    stitch_instance.cylindrical()
     stitch_instance.feature_detect()
     stitch_instance.feature_matching()
     stitch_instance.pairwise_alignment()
