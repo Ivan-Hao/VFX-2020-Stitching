@@ -9,7 +9,7 @@ from numpy_sift import SIFTDescriptor
 
 class Stitch():
 
-    def __init__(self, images, detection ,descriptor ,focal, rectangle):
+    def __init__(self, images, detection ,descriptor ,warp ,focal, rectangle):
         self.images = images # bgr image list
         self.detection = detection
         self.descriptor = descriptor
@@ -19,7 +19,8 @@ class Stitch():
         self.feature = [] # 全部的image feature
         self.focal = focal # list of focal length
         self.rectangle = rectangle
-        self.motion = []
+        self.motion = [] # motion model
+        self.warp = warp
         self.panorama = None
 
     def feature_detect(self, k=0.04):
@@ -164,9 +165,12 @@ class Stitch():
             y_prime += y_shift
             x_prime = np.around(x_prime).astype(np.uint)
             y_prime = np.around(y_prime).astype(np.uint)
+
             project = np.zeros_like(self.images[i])
             project[y_prime,x_prime,:] = self.images[i][index[0],index[1],:]
+            project = project[:,np.min(x_prime):np.max(x_prime)]
             self.images[i] = project.astype(np.uint8)
+
   
     def pairwise_alignment(self):
         for i in range(len(self.match)):
@@ -178,22 +182,22 @@ class Stitch():
             min_ = np.inf
             #best = None
             for k in range(200): # 200次啦 = =
-                A = np.zeros((8,6),dtype=np.float64)
-                b = np.zeros((8,1),dtype=np.float64)
-                for j in range(4):
+                A = np.zeros((6,6),dtype=np.float64)
+                b = np.zeros((6,1),dtype=np.float64)
+                for j in range(3):
                     x = np.random.randint(len(self.match[i]))
                     b[j*2,0] = self.match[i][x][0][0] # origin x   第i 與第 i+1 的第 x比match中 第i比的x position
                     b[j*2+1] = self.match[i][x][0][1] # origin y
                     A[j*2,0:3] = np.array([self.match[i][x][1][0],self.match[i][x][1][1],1]) # x_prime, y_prime, 1 ,0 ,0 ,0
                     A[j*2+1,3:6] = np.array([self.match[i][x][1][0],self.match[i][x][1][1],1]) # 0, 0, 0, x_prime, y_prime, 1
-                A_inverse = np.linalg.pinv(A)
+                A_inverse = np.linalg.pinv(A).astype(np.float64)
                 motion_model = np.dot(A_inverse,b).reshape(2,3)
                 motion_model = np.vstack((motion_model,[0,0,1]))
                     
                 compare = np.dot(motion_model,kp_mat)
                 diff = np.abs(compare[:2,:].flatten('F') - origin_mat.flatten('F')).sum()
                 if diff < min_:
-                    rows, cols = self.images[0].shape[0:2]
+                    #rows, cols = self.images[0].shape[0:2]
                     min_ = diff
                     best_motion = motion_model
                     '''
@@ -204,41 +208,45 @@ class Stitch():
             self.motion.append(best_motion)
 
     def image_matching(self):
-        '''
-        last = self.images[0]
-        m = np.concatenate((np.eye(2,2),self.motion[0][:2,2].reshape(-1,1)),axis=1)
-        for i in range(len(self.motion)):
-            #panorama = cv2.warpPerspective(self.images[i+1],m,(last.shape[1]+self.images[i+1].shape[1], last.shape[0]))
-            panorama = cv2.warpAffine(self.images[i+1],m,(int(m[0,2]+self.images[i+1].shape[1]), last.shape[0]))
-            panorama[0:last.shape[0],0:last.shape[1]] = last
-            last = panorama
-            if i == len(self.motion)-1:
-                break
-            m += np.concatenate((np.zeros((2,2)),self.motion[i+1][:2,2].reshape(-1,1)),axis=1)
-        plt.imshow(last)
+        if self.warp == 'transform':
+            last = self.images[0]
+            m = np.concatenate((np.eye(2,2),self.motion[0][:2,2].reshape(-1,1)),axis=1)
+            for i in range(len(self.motion)):
+  
+                panorama = cv2.warpAffine(self.images[i+1],m,(int(m[0,2])+self.images[i+1].shape[1], int(m[1,2])+images[i+1].shape[0]))
+                panorama[0:last.shape[0],0:last.shape[1]] = last
+                last = panorama
+                if i == len(self.motion)-1:
+                    break
+                m += np.concatenate((np.zeros((2,2)),self.motion[i+1][:2,2].reshape(-1,1)),axis=1)
+            self.panorama = last
+
+        else:
+            last = self.images[0]
+            m = self.motion[0]
+            for i in range(len(self.motion)):
+
+                panorama = cv2.warpPerspective(self.images[i+1],m,(int(m[0,2])+self.images[i+1].shape[1], int(m[1,2])+self.images[i+1].shape[0]))
+                #blending=====================
+                panorama[0:last.shape[0],0:last.shape[1]] = last
+                last = panorama
+                if i == len(self.motion)-1:
+                    break
+                m = np.dot(m,self.motion[i+1])
+            self.panorama = last
+        plt.imshow(self.panorama[:,:,::-1])
         plt.show()
-        '''
-        last = self.images[0]
-        m = self.motion[0]
-        for i in range(len(self.motion)):
-            panorama = cv2.warpPerspective(self.images[i+1],m,(int(m[0,2])+self.images[i+1].shape[1], int(m[1,2])+last.shape[0]))
-            panorama[0:last.shape[0],0:last.shape[1]] = last
-            last = panorama
-            if i == len(self.motion)-1:
-                break
-            m = np.dot(m,self.motion[i+1])
-        self.panorama = last
-        plt.imshow(last)
-        plt.show()
-    def trim(self):
-        if not np.sum(self.panorama[0]):
-            return self.trim(self.panorama[1:])
 
     def fix_alignment(self):
+        x = self.panorama.shape[1]
+        y = self.panorama.shape[0]
+        diff = y - self.images[0].shape[0]
+        
         pass
 
-    def blending(self, panorama):
-        pass
+    def blending(self):
+        x = self.panorama.shape[1]
+
 
     def crop(self, panorama):
         pass
@@ -248,6 +256,7 @@ if __name__ == '__main__':
     parser.add_argument("--detection", help="feature detection method(harris, sift)", default='sift', type=str)
     parser.add_argument("--descriptor", help="feature descriptor method(patch, sift)", default='sift', type=str)
     parser.add_argument("--path", help="images directory path", default='./images', type=str)
+    parser.add_argument("--warp", help="warp (affine, transform)", default='affine', type=str)
     parser.add_argument("--rectangle", help="rectangling panorama(crop, warp)", default='crop', type=str)
     parser.add_argument("--focal", help="the focal length file", default='./focal.txt', type=str)
     args = parser.parse_args()
@@ -256,7 +265,7 @@ if __name__ == '__main__':
     for files in os.listdir(args.path):
         images.append(cv2.imread(os.path.join(args.path,files)))
     focal = np.loadtxt(args.focal)
-    stitch_instance = Stitch(images ,args.detection ,args.descriptor ,focal, args.rectangle)
+    stitch_instance = Stitch(images ,args.detection ,args.descriptor ,args.warp ,focal, args.rectangle)
     stitch_instance.cylindrical()
     stitch_instance.feature_detect()
     stitch_instance.feature_matching()
