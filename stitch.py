@@ -222,19 +222,50 @@ class Stitch():
             self.panorama = last
 
         else:
-            last = self.images[0]
+            last = self.images[0].astype(np.float64)
             m = self.motion[0]
+            last_shift = 0
             for i in range(len(self.motion)):
 
-                panorama = cv2.warpPerspective(self.images[i+1],m,(int(m[0,2])+self.images[i+1].shape[1], int(m[1,2])+self.images[i+1].shape[0]))
-                #blending=====================
-                panorama[0:last.shape[0],0:last.shape[1]] = last
+                panorama = cv2.warpPerspective(self.images[i+1].astype(np.float64),m,(int(m[0,2])+self.images[i+1].shape[1], int(m[1,2])+self.images[i+1].shape[0]))
+                #blending=========================================
+                blend_mat = np.ones((self.images[i+1].shape[0],int(m[0,2]-last_shift)),dtype=np.float64)
+                blend_mat = cv2.warpPerspective(blend_mat,m,(int(m[0,2])+self.images[i+1].shape[1], int(m[1,2])+self.images[i+1].shape[0]))
+                kk = np.pad(last.sum(axis=2), ((0,blend_mat.shape[0]-last.shape[0]),(0,blend_mat.shape[1]-last.shape[1])))
+                kk = np.where(kk!=0,True,False)
+                blend_mat = np.where(blend_mat!=0,True,False)
+                blend_mat = np.logical_and(blend_mat,kk)
+                r = np.copy(blend_mat)
+                l = np.copy(blend_mat)
+                for j in range(blend_mat.shape[0]):
+                    if blend_mat[j].sum() !=0 :
+                        nonzero = np.nonzero(blend_mat[j])
+                        min_ = np.min(nonzero)
+                        max_ = np.max(nonzero)
+                        t = max_ - min_
+                        l[j][min_:max_+1] = np.linspace(1,0,t+1,dtype=np.float64)
+                        r[j][min_:max_+1] = np.linspace(0,1,t+1,dtype=np.float64)
+
+                last = np.pad(last, ((0,panorama.shape[0]-last.shape[0]),(0,panorama.shape[1]-last.shape[1]),(0,0)))
+                plt.imshow(last)
+                plt.show()
+                for j in range(3):
+                    r_ = r*panorama[:,:,j]
+                    l_ = l*last[:,:,j]
+                    panorama[:,:,j] += last[:,:,j]
+                    panorama[:,:,j] *= (blend_mat^True)
+                    panorama[:,:,j] += r_
+                    panorama[:,:,j] += l_
+                #panorama[0:last.shape[0],0:last.shape[1]] = last
+
                 last = panorama
+
                 if i == len(self.motion)-1:
                     break
+                last_shift = int(m[0,2])
                 m = np.dot(m,self.motion[i+1])
             self.panorama = last
-        plt.imshow(self.panorama[:,:,::-1])
+        plt.imshow(self.panorama[:,:,::-1].astype(np.uint8))
         plt.show()
 
     def fix_alignment(self):
@@ -244,8 +275,6 @@ class Stitch():
         
         pass
 
-    def blending(self):
-        x = self.panorama.shape[1]
 
 
     def crop(self, panorama):
