@@ -22,6 +22,8 @@ class Stitch():
         self.motion = [] # motion model
         self.warp = warp
         self.panorama = None
+        self.up_right = None
+        self.down_right = None
 
     def feature_detect(self, k=0.04):
         if self.detection == 'harris':
@@ -103,10 +105,11 @@ class Stitch():
                     b = np.random.rand()
                     g = np.random.rand()
                     plt.plot(match[j][0][0],match[j][0][1],'*',color= (r,g,b))
-                    plt.plot(384+match[j][1][0],match[j][1][1],'*',color = (r,g,b))
+                    plt.plot(self.images[i].shape[1]+match[j][1][0],match[j][1][1],'*',color = (r,g,b))
                 plt.imshow(temp,cmap='gray')
                 plt.show()
                 '''
+                
         else:
             FLANN_INDEX_KDTREE = 1
             index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
@@ -142,12 +145,12 @@ class Stitch():
                     r = np.random.rand()
                     b = np.random.rand()
                     g = np.random.rand()
-                    plt.plot(match[j][1][0],match[j][1][1],'*',color= (r,g,b))
-                    plt.plot(384+match[j][2][0],match[j][2][1],'*',color = (r,g,b))
+                    plt.plot(match[j][0][0],match[j][0][1],'*',color= (r,g,b))
+                    plt.plot(self.images[i].shape[1]+match[j][1][0],match[j][1][1],'*',color = (r,g,b))
                 plt.imshow(temp,cmap='gray')
                 plt.show()
-                
                 '''
+                
 
     def cylindrical(self):
         for i in range(len(self.images)):
@@ -168,7 +171,7 @@ class Stitch():
 
             project = np.zeros_like(self.images[i])
             project[y_prime,x_prime,:] = self.images[i][index[0],index[1],:]
-            project = project[:,np.min(x_prime):np.max(x_prime)]
+            project = project[np.min(y_prime):np.max(y_prime),np.min(x_prime):np.max(x_prime)]
             self.images[i] = project.astype(np.uint8)
 
   
@@ -224,61 +227,74 @@ class Stitch():
         else:
             last = self.images[0].astype(np.float64)
             m = self.motion[0]
-            last_shift = 0
             for i in range(len(self.motion)):
-
-                panorama = cv2.warpPerspective(self.images[i+1].astype(np.float64),m,(int(m[0,2])+self.images[i+1].shape[1], int(m[1,2])+self.images[i+1].shape[0]))
+                pos = np.array([self.images[i+1].shape[1]-1,self.images[i+1].shape[0]-1,1]).reshape(3,1) #座標
+                pos = np.dot(m,pos)
+                panorama = cv2.warpPerspective(self.images[i+1],m,(int(pos[0,0]), int(pos[1,0]))).astype(np.float64)
+                
+                
                 #blending=========================================
-                blend_mat = np.ones((self.images[i+1].shape[0],int(m[0,2]-last_shift)),dtype=np.float64)
-                blend_mat = cv2.warpPerspective(blend_mat,m,(int(m[0,2])+self.images[i+1].shape[1], int(m[1,2])+self.images[i+1].shape[0]))
-                kk = np.pad(last.sum(axis=2), ((0,blend_mat.shape[0]-last.shape[0]),(0,blend_mat.shape[1]-last.shape[1])))
-                kk = np.where(kk!=0,True,False)
-                blend_mat = np.where(blend_mat!=0,True,False)
+                blend_mat = panorama.sum(axis=2).astype(np.bool)
+                kk = np.pad(last.sum(axis=2), ((0,blend_mat.shape[0]-last.shape[0]),(0,blend_mat.shape[1]-last.shape[1]))).astype(np.bool)
                 blend_mat = np.logical_and(blend_mat,kk)
-                r = np.copy(blend_mat)
-                l = np.copy(blend_mat)
-                for j in range(blend_mat.shape[0]):
+                r = blend_mat.copy()
+                l = blend_mat.copy()
+                for j in range( blend_mat.shape[0]):
                     if blend_mat[j].sum() !=0 :
                         nonzero = np.nonzero(blend_mat[j])
                         min_ = np.min(nonzero)
                         max_ = np.max(nonzero)
                         t = max_ - min_
-                        l[j][min_:max_+1] = np.linspace(1,0,t+1,dtype=np.float64)
-                        r[j][min_:max_+1] = np.linspace(0,1,t+1,dtype=np.float64)
+                        l[j][min_:max_+1] = np.linspace(0.9,0.1,t+1,dtype=np.float64)
+                        r[j][min_:max_+1] = np.linspace(0.1,0.9,t+1,dtype=np.float64)
 
                 last = np.pad(last, ((0,panorama.shape[0]-last.shape[0]),(0,panorama.shape[1]-last.shape[1]),(0,0)))
-                plt.imshow(last)
-                plt.show()
+                
                 for j in range(3):
-                    r_ = r*panorama[:,:,j]
-                    l_ = l*last[:,:,j]
+                    r_ = r*panorama[:,:,j]/2
+                    l_ = l*last[:,:,j]/2
                     panorama[:,:,j] += last[:,:,j]
-                    panorama[:,:,j] *= (blend_mat^True)
+                    panorama[:,:,j] = (blend_mat^True) *panorama[:,:,j]
                     panorama[:,:,j] += r_
                     panorama[:,:,j] += l_
-                #panorama[0:last.shape[0],0:last.shape[1]] = last
+                #===========================================================
 
                 last = panorama
-
                 if i == len(self.motion)-1:
+                    up_right = np.array([self.images[i+1].shape[1]-1,0,1]).reshape(3,1)
+                    up_right = np.dot(m,up_right)
+                    self.up_right = up_right
+                    self.down_right = pos
                     break
-                last_shift = int(m[0,2])
                 m = np.dot(m,self.motion[i+1])
             self.panorama = last
-        plt.imshow(self.panorama[:,:,::-1].astype(np.uint8))
-        plt.show()
+        
+   
+        #plt.imshow(self.panorama[:,:,::-1].astype(np.uint8))
+        #plt.show()
 
     def fix_alignment(self):
-        x = self.panorama.shape[1]
-        y = self.panorama.shape[0]
-        diff = y - self.images[0].shape[0]
-        
-        pass
+        src = self.panorama
+        srcTri = np.array( [[0, 0], [0, self.images[0].shape[0] - 1], [self.up_right[0,0],self.up_right[1,0]], [self.down_right[0,0],self.down_right[1,0]]]).astype(np.float32)
+        dstTri = np.array( [[0, 0], [0, self.images[0].shape[0] - 1], [self.up_right[0,0], 0], [self.up_right[0,0],self.images[0].shape[0] - 1]]).astype(np.float32)
+        print(srcTri,dstTri)
+        warp_mat = cv2.getPerspectiveTransform(srcTri, dstTri)
+        warp_dst = cv2.warpPerspective(src, warp_mat, ( int(self.up_right[0,0]), self.images[0].shape[0] - 1))
+        self.panorama = warp_dst.astype(np.uint8)
+        #plt.imshow(self.panorama[:,:,::-1])
+        #plt.show()        
 
 
-
-    def crop(self, panorama):
-        pass
+    def crop(self):
+        self.panorama = self.panorama[10:,:,:]
+        p = self.panorama.sum(axis= 2)
+        index = np.where(p==0)
+        m = np.min(index[0])
+        print(m)
+        print(index)
+        self.panorama = self.panorama[:m,:,:]
+        plt.imshow(self.panorama[:,:,::-1])
+        plt.show()     
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -300,3 +316,5 @@ if __name__ == '__main__':
     stitch_instance.feature_matching()
     stitch_instance.pairwise_alignment()
     stitch_instance.image_matching()
+    stitch_instance.fix_alignment()
+    stitch_instance.crop()
