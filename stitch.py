@@ -65,7 +65,7 @@ class Stitch():
                 traceM = Sx+Sy
                 R = detM - k*(traceM * traceM)
                 R[:10,:]=0; R[-10:,:]=0; R[:,:10]=0; R[:,-10:]=0 # 去掉邊邊的特徵點
-                threshold = np.percentile(R,((1 - 1024/(img.shape[0]*img.shape[1]))*100)) 
+                threshold = np.percentile(R,((1 - 2048/(img.shape[0]*img.shape[1]))*100)) 
                 R[np.where(R<threshold)] = 0
                 # ======================= non maximal suppression =================================== #
                 local_max = filters.maximum_filter(R, (7, 7))
@@ -107,7 +107,7 @@ class Stitch():
                 m = [] 
                 for j in range(len(self.feature[i+1])):
                     distance,index = tree.query(self.feature[i+1][j],2)
-                    if distance[0] < 0.75*distance[1]:
+                    if distance[0] < 0.6*distance[1]:
                         m.append(((self.feature_position[i][1][index[0]],self.feature_position[i][0][index[0]]),(self.feature_position[i+1][1][j],self.feature_position[i+1][0][j])))    
                 self.match.append(m)
                 '''
@@ -141,7 +141,7 @@ class Stitch():
                 matches = list(filter(fn,matches1))
                 m_ = []
                 for m, n in matches:
-                    if m.distance < 0.75*n.distance:
+                    if m.distance < 0.5*n.distance:
                         m_.append((kp1[m.queryIdx].pt,kp2[m.trainIdx].pt))
                 self.match.append(m_) #((x1,y1) , (x2,y2))
                 '''
@@ -175,13 +175,14 @@ class Stitch():
                     A[j*2,0:3] = np.array([self.match[i][x][1][0],self.match[i][x][1][1],1]) # x_prime, y_prime, 1 ,0 ,0 ,0
                     A[j*2+1,3:6] = np.array([self.match[i][x][1][0],self.match[i][x][1][1],1]) # 0, 0, 0, x_prime, y_prime, 1
                 A_inverse = np.linalg.pinv(A)
-                motion_model = np.dot(A_inverse,b).reshape(2,3)
+                motion_model = np.dot(A_inverse,b).reshape(2,3).astype(np.float64)
                 motion_model = np.vstack((motion_model,[0,0,1]))
                 compare = np.dot(motion_model,kp_mat)
                 diff = np.abs(compare[:2,:].flatten('F') - origin_mat.flatten('F')).sum()
                 if diff < min_:
                     min_ = diff
                     best_motion = motion_model
+                    best_motion[0:2,0:2] = np.eye(2,2)
             self.motion.append(best_motion)
 
     def image_matching(self):
@@ -259,11 +260,13 @@ class Stitch():
     def crop(self):
         r = self.panorama.sum(axis=2)
         for i in range(0,r.shape[0]//2):
-            if len(np.where(r[i] == 0)[0]) > r.shape[1]/5:
-                self.panorama = self.panorama[i:,:,:]
+            if len(np.where(r[i] == 0)[0]) > r.shape[1]/15:
+                k = i        
+        self.panorama = self.panorama[k:,:,:]
         for i in range(r.shape[0]//2,r.shape[0]):
-            if len(np.where(r[i] == 0)[0]) > r.shape[1]/5:
-                self.panorama = self.panorama[:i,:,:]
+            if len(np.where(r[i] == 0)[0]) > r.shape[1]/15:
+                k= i 
+        self.panorama = self.panorama[:k,:,:]
         plt.imshow(self.panorama[:,:,::-1])
         plt.show()     
 
