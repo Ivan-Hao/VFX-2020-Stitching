@@ -107,10 +107,10 @@ class Stitch():
                 m = [] 
                 for j in range(len(self.feature[i+1])):
                     distance,index = tree.query(self.feature[i+1][j],2)
-                    if distance[0] < 0.6*distance[1]:
+                    if distance[0] < 0.5*distance[1]:
                         m.append(((self.feature_position[i][1][index[0]],self.feature_position[i][0][index[0]]),(self.feature_position[i+1][1][j],self.feature_position[i+1][0][j])))    
                 self.match.append(m)
-                '''
+                
                 for j in range(len(m)):
                     temp = np.concatenate((self.gray_images[i],self.gray_images[i+1]),axis=1)
                     r = np.random.rand()
@@ -120,7 +120,7 @@ class Stitch():
                     plt.plot(self.images[i].shape[1]+m[j][1][0],m[j][1][1],'*',color = (r,g,b))
                 plt.imshow(temp,cmap='gray')
                 plt.show()
-                '''    
+                   
         else:
             index_params = dict(algorithm=1, trees=5)
             search_params = dict(checks=50)
@@ -165,6 +165,8 @@ class Stitch():
             min_ = np.inf
             l = [n for n in range(len(self.match[i]))]
             for k in range(500): # 500次啦 = =
+                # ============================  affine ======================================== 很難做好哭阿
+                '''
                 A = np.zeros((6,6),dtype=np.float64)
                 b = np.zeros((6,1),dtype=np.float64)
                 randomlist = random.sample(l, 3)
@@ -177,12 +179,22 @@ class Stitch():
                 A_inverse = np.linalg.pinv(A)
                 motion_model = np.dot(A_inverse,b).reshape(2,3).astype(np.float64)
                 motion_model = np.vstack((motion_model,[0,0,1]))
+                '''
+                # ===============================transkation================================= 比較容易= =
+                A = np.eye(3,3,dtype=np.float64)
+                b = np.ones((3,1),dtype=np.float64)
+                x = np.random.randint(len(self.match[i]))
+                A[0:2,2] = np.array([self.match[i][x][1][0],self.match[i][x][1][1]])
+                b[0:2,0] = np.array([self.match[i][x][0][0],self.match[i][x][0][1]])
+                A_inverse = np.linalg.pinv(A)          
+                motion_model = np.eye(3,3,dtype=np.float64)
+                motion_model[0:2,2] = np.dot(A_inverse,b)[0:2,0]
+                # ===========================================================================
                 compare = np.dot(motion_model,kp_mat)
                 diff = np.abs(compare[:2,:].flatten('F') - origin_mat.flatten('F')).sum()
                 if diff < min_:
                     min_ = diff
                     best_motion = motion_model
-                    best_motion[0:2,0:2] = np.eye(2,2)
             self.motion.append(best_motion)
 
     def image_matching(self):
