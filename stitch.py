@@ -153,7 +153,7 @@ class Stitch():
                     if m.distance < 0.6*n.distance:
                         m_.append((kp1[m.queryIdx].pt,kp2[m.trainIdx].pt))
                 self.match.append(m_) #((x1,y1) ,(x2,y2))
-                plot(m_,self.gray_images[i],self.gray_images[i+1],i)
+                #plot(m_,self.gray_images[i],self.gray_images[i+1],i)
 
     def pairwise_alignment(self):
         for i in range(len(self.match)):
@@ -276,13 +276,12 @@ class Stitch():
         r = self.panorama.sum(axis=2)
         for i in range(0,r.shape[0]//2):
             if len(np.where(r[i] == 0)[0]) > r.shape[1]/len(self.images):
-                k = i        
-        self.panorama = self.panorama[k:,:,:]
+                j = i        
         for i in range(r.shape[0]//2,r.shape[0]):
             if len(np.where(r[i] == 0)[0]) > r.shape[1]/len(self.images):
                 k= i
                 break 
-        self.panorama = self.panorama[:k,:,:]
+        self.panorama = self.panorama[j:k,:,:]
         cv2.imwrite('./results/after_crop.jpg',self.panorama)
         plt.imshow(self.panorama[:,:,::-1])
         plt.show()     
