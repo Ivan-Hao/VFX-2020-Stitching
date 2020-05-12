@@ -274,12 +274,14 @@ class Stitch():
 
     def crop(self):
         r = self.panorama.sum(axis=2)
+        j = 0
+        k = self.panorama.shape[0]
         for i in range(0,r.shape[0]//2):
             if len(np.where(r[i] == 0)[0]) > r.shape[1]/len(self.images):
                 j = i        
         for i in range(r.shape[0]//2,r.shape[0]):
             if len(np.where(r[i] == 0)[0]) > r.shape[1]/len(self.images):
-                k= i
+                k = i
                 break 
         self.panorama = self.panorama[j:k,:,:]
         cv2.imwrite('./results/after_crop.jpg',self.panorama)
